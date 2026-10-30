@@ -1,5 +1,13 @@
 // Central place for all backend calls. Pages import from here instead of using fetch directly.
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api'
+const LOCAL_API_URL = 'http://localhost:5001/api'
+const BASE_URL = (import.meta.env.VITE_API_URL || (import.meta.env.DEV ? LOCAL_API_URL : '')).replace(/\/+$/, '')
+
+function getApiBaseUrl() {
+  if (!BASE_URL) {
+    throw new Error('The API is not configured for this site. Set VITE_API_URL to your deployed backend URL ending in /api.')
+  }
+  return BASE_URL
+}
 
 // ---- The login token (kept in the browser so you stay logged in after a refresh) ----
 const TOKEN_KEY = 'campus-os-token'
@@ -40,7 +48,7 @@ async function request(path, { method = 'GET', body, isPublic = false, rawBody =
 
   let res
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
+    res = await fetch(`${getApiBaseUrl()}${path}`, {
       method,
       headers,
       body: body === undefined ? undefined : rawBody ? body : JSON.stringify(body),
@@ -109,7 +117,7 @@ export const api = {
     const token = getToken()
     let response
     try {
-      response = await fetch(`${BASE_URL}/resources/${id}/file`, {
+      response = await fetch(`${getApiBaseUrl()}/resources/${id}/file`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
     } catch {
