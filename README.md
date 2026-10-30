@@ -69,6 +69,16 @@ npm run dev
 
 Vite uses `http://localhost:5001/api` by default. Set `VITE_API_URL` in `frontend/.env` to override it.
 
+## Deploying the frontend to Netlify
+
+The repository's `netlify.toml` configures Netlify to build the Vite app from `frontend/` and publish `frontend/dist`. It also routes client-side pages back through `index.html`.
+
+The frontend is only one part of Campus OS. Netlify hosts the static site; deploy the Express API and a MySQL database separately. The API must be reachable over HTTPS, and its database must be reachable from the API host. Do not put database credentials or JWT secrets in Netlify's frontend environment variables: Vite `VITE_` variables are included in the browser bundle.
+
+When configuring the Netlify site, add the build environment variable `VITE_API_URL` with the public API base URL, ending in `/api` (for example, `https://api.example.com/api`). Rebuild after changing it. On the API host, configure its database credentials, a private `JWT_SECRET` of at least 32 characters, and `CORS_ORIGIN` equal to the deployed Netlify site origin (for example, `https://example.netlify.app`). Set `NODE_ENV=production`.
+
+Faculty resource uploads currently use the API server's local `backend/uploads` directory. A production API host needs persistent storage for these files, such as a persistent disk or object storage, or uploaded files may be lost when the service restarts or redeploys.
+
 ## Roles and onboarding
 
 ### Platform administrator
