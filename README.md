@@ -73,13 +73,13 @@ npm run platform-admin:create
 
 Sign in with that account to create an institution and its first institution administrator. Institution admins can then set up departments, academic programs, class sections, roster entries, subjects, and faculty assignments. There is no public signup for administrator roles.
 
-## Deploying the frontend to Netlify
+## Deploying the full app to Vercel
 
-`netlify.toml` builds the Vite app from `frontend/` and publishes `frontend/dist`. Netlify hosts only the static frontend; deploy the Express API separately to a Node.js host that can reach Supabase PostgreSQL.
+The root `vercel.json` deploys the Vite frontend and Express API as two Vercel services under one project and domain. It sends `/api/*` requests to Express and all other paths to the React single-page app. In the Vercel project settings, set **Root Directory** to the repository root (`.`), not `backend/` or `frontend/`.
 
-Set Netlify's `VITE_API_URL` to the public HTTPS API base URL ending in `/api` (for example, `https://api.example.com/api`). On the backend host, set `DATABASE_URL`, `JWT_SECRET`, `NODE_ENV=production`, and `CORS_ORIGIN` to the exact Netlify site origin. Do not put database credentials, JWT secrets, or Supabase secret keys in Netlify's frontend variables. Vite embeds `VITE_` variables in browser assets.
+Add these server environment variables in Vercel for Production and Preview: `DATABASE_URL` (the Supabase PostgreSQL connection string), `DATABASE_SSL=require`, `DB_POOL_SIZE=5`, `JWT_SECRET` (a private random value of at least 32 characters), `NODE_ENV=production`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET=campus-resources`. Keep the service role key server-side; never prefix it with `VITE_`. The frontend uses the same-origin `/api` path in production, so it does not need a `VITE_API_URL` variable.
 
-Faculty resource uploads currently use the API server's local `backend/uploads` directory. A production API host needs persistent storage, such as a persistent disk or object storage, or uploaded files may be lost when the service restarts or redeploys.
+Create a **private** Supabase Storage bucket named `campus-resources` before enabling faculty PDF uploads. In Vercel, redeploy after adding or changing environment variables. Vercel Services are currently documented as beta and support deploying multiple apps in one project; the project-level routing config lives in `vercel.json`.
 
 ## Verified student and faculty signup
 

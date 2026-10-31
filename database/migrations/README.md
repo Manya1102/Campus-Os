@@ -7,4 +7,6 @@ These incremental migration files use PostgreSQL syntax for Supabase. They do no
 - **New, empty Supabase project:** run `database/supabase_schema.sql` once. It already includes the changes from these incremental migrations. Do not run the incremental files afterward.
 - **Existing PostgreSQL database with the original Campus OS base tables:** run these files once each in filename order. They upgrade existing data without dropping tables.
 
+The `20261031_07_supabase_storage_bucket.sql` file is an optional Supabase Storage setup step for faculty PDF uploads. Run it in the Supabase SQL Editor after the schema setup. It creates or updates a private `campus-resources` bucket; the backend uses its server-only service role key to upload and fetch files after checking application access.
+
 Do not run the old MySQL SQL from an earlier copy of these files. These migrations assume the original base tables exist and that MySQL types were already translated to PostgreSQL types. They do not import data from a MySQL server; data migration is separate.

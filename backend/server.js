@@ -25,6 +25,9 @@ const app = express()
 const PORT = process.env.PORT || 5001
 const IS_PRODUCTION = process.env.NODE_ENV === 'production'
 const RESOURCE_UPLOAD_DIR = path.join(__dirname, 'uploads')
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '')
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
+const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'campus-resources'
 
 // ---------------------------------------------------------------------------
 // 1. Setup: secret key, CORS, JSON, and the Supabase PostgreSQL connection
@@ -76,6 +79,70 @@ function route(handler) {
 
 function httpError(status, message) {
   return Object.assign(new Error(message), { status })
+}
+
+function hasSupabaseStorage() {
+  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
+}
+
+function supabaseStorageObjectUrl(resourceId, download = false) {
+  const access = download ? 'authenticated' : ''
+  const prefix = access ? `/object/${access}` : '/object'
+  return `${SUPABASE_URL}/storage/v1${prefix}/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/resources/${resourceId}.pdf`
+}
+
+async function uploadResourceFile(resourceId, file) {
+  if (!hasSupabaseStorage()) {
+    if (IS_PRODUCTION) {
+      throw httpError(503, 'File storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.')
+    }
+    await fs.mkdir(RESOURCE_UPLOAD_DIR, { recursive: true })
+    await fs.writeFile(path.join(RESOURCE_UPLOAD_DIR, `${resourceId}.pdf`), file, { flag: 'wx' })
+    return
+  }
+
+  const response = await fetch(supabaseStorageObjectUrl(resourceId), {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/pdf',
+      'x-upsert': 'false',
+    },
+    body: file,
+  })
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    console.error(`Supabase Storage upload failed (${response.status}): ${detail.slice(0, 500)}`)
+    throw new Error('Resource file could not be saved to storage')
+  }
+}
+
+async function sendResourceFile(resourceId, res) {
+  if (!hasSupabaseStorage()) {
+    const filePath = path.join(RESOURCE_UPLOAD_DIR, `${resourceId}.pdf`)
+    res.type('application/pdf')
+    res.set('Content-Disposition', `inline; filename="resource-${resourceId}.pdf"`)
+    return res.sendFile(filePath, (err) => {
+      if (err && !res.headersSent) res.status(err.statusCode === 404 ? 404 : 500).json({ error: 'Resource file could not be opened' })
+    })
+  }
+
+  const response = await fetch(supabaseStorageObjectUrl(resourceId, true), {
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+  })
+  if (!response.ok) {
+    if (response.status === 404) throw httpError(404, 'Resource file not found')
+    const detail = await response.text().catch(() => '')
+    console.error(`Supabase Storage download failed (${response.status}): ${detail.slice(0, 500)}`)
+    throw new Error('Resource file could not be opened')
+  }
+  res.type('application/pdf')
+  res.set('Content-Disposition', `inline; filename="resource-${resourceId}.pdf"`)
+  res.send(Buffer.from(await response.arrayBuffer()))
 }
 
 // Runs several database changes as one unit: either all are saved, or none are.
@@ -866,10 +933,8 @@ app.post('/api/faculty/resources', facultyOnly, express.raw({ type: 'application
     [req.user.university_id, title, subject.name, description, req.user.name, req.user.user_id]
   )
 
-  const storedName = `${created.insertId}.pdf`
   try {
-    await fs.mkdir(RESOURCE_UPLOAD_DIR, { recursive: true })
-    await fs.writeFile(path.join(RESOURCE_UPLOAD_DIR, storedName), file, { flag: 'wx' })
+    await uploadResourceFile(created.insertId, file)
     await db.query('UPDATE resources SET url = ? WHERE id = ?', [`/api/resources/${created.insertId}/file`, created.insertId])
   } catch (err) {
     await db.query('DELETE FROM resources WHERE id = ?', [created.insertId])
@@ -897,12 +962,7 @@ app.get('/api/resources/:id/file', route(async (req, res) => {
   )
   if (!rows.length) throw httpError(404, 'Resource file not found')
 
-  const filePath = path.join(RESOURCE_UPLOAD_DIR, `${id}.pdf`)
-  res.type('application/pdf')
-  res.set('Content-Disposition', `inline; filename="resource-${id}.pdf"`)
-  res.sendFile(filePath, (err) => {
-    if (err && !res.headersSent) res.status(err.statusCode === 404 ? 404 : 500).json({ error: 'Resource file could not be opened' })
-  })
+  await sendResourceFile(id, res)
 }))
 
 app.post('/api/resources/:id/favourite', route(async (req, res) => {
@@ -1927,12 +1987,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = {
-  app,
-  hashPassword,
-  verifyPassword,
-  validateEmail,
-  validatePassword,
-  isValidDateString,
-  rateLimit,
-}
+module.exports = app

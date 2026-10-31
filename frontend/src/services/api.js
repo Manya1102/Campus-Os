@@ -1,10 +1,12 @@
 // Central place for all backend calls. Pages import from here instead of using fetch directly.
 const LOCAL_API_URL = 'http://localhost:5001/api'
-const BASE_URL = (import.meta.env.VITE_API_URL || (import.meta.env.DEV ? LOCAL_API_URL : '')).replace(/\/+$/, '')
+// On Vercel the frontend and API share one origin, so production can use /api.
+// VITE_API_URL remains available for local or separate-host deployments.
+const BASE_URL = (import.meta.env.VITE_API_URL || (import.meta.env.DEV ? LOCAL_API_URL : '/api')).replace(/\/+$/, '')
 
 function getApiBaseUrl() {
   if (!BASE_URL) {
-    throw new Error('The API is not configured for this site. Set VITE_API_URL to your deployed backend URL ending in /api.')
+    throw new Error('The API is not configured for this site. Set VITE_API_URL to the API base URL ending in /api.')
   }
   return BASE_URL
 }
