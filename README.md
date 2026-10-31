@@ -63,6 +63,16 @@ npm run seed:demo
 
 The demo password is `Campus@123`. The command also creates their program/section links, subject enrollments, and the faculty timetable. The script refuses to run when `NODE_ENV=production` unless `ALLOW_DEMO_ACCOUNTS=true` is explicitly set. Do not enable demo accounts on a public production site.
 
+### Demo sign-in credentials
+
+| Account | Email | Password |
+|---|---|---|
+| Student (Computer Science) | `alex.morgan@university.edu` | `Campus@123` |
+| Faculty | `faculty@university.edu` | `Campus@123` |
+| Student (Electronics) | `riya.patel@university.edu` | `Campus@123` |
+
+There is no shared administrator demo account. Administrator credentials are chosen interactively when you run `npm run platform-admin:create` or `npm run admin:create`; the passwords are intentionally never stored in this README or in the source code. Administrator accounts are created active and do not use public signup.
+
 ## Initial administrator setup
 
 The full schema does not create demo login accounts or a platform administrator. After the backend is connected, create the first platform administrator from `backend/`:
