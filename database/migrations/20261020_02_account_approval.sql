@@ -1,7 +1,15 @@
--- Add manual review for new student and faculty accounts.
--- Existing users stay active; new signups are marked pending by the API.
-USE campus_os;
-
+-- Add manual review status for newly created accounts.
 ALTER TABLE users
-  ADD COLUMN account_status ENUM('pending','active','rejected') NOT NULL DEFAULT 'active'
-  AFTER role;
+  ADD COLUMN IF NOT EXISTS account_status varchar(20) NOT NULL DEFAULT 'active';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'users'::regclass AND conname = 'users_account_status_check'
+  ) THEN
+    ALTER TABLE users
+      ADD CONSTRAINT users_account_status_check
+      CHECK (account_status IN ('pending', 'active', 'rejected'));
+  END IF;
+END $$;

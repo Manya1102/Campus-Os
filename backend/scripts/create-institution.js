@@ -1,9 +1,9 @@
 const crypto = require('crypto')
 const path = require('path')
 const { promisify } = require('util')
-const mysql = require('mysql2/promise')
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
+const db = require('../database')
 
 const scrypt = promisify(crypto.scrypt)
 
@@ -65,29 +65,24 @@ async function main() {
 
   const salt = crypto.randomBytes(16).toString('hex')
   const hash = await scrypt(password, salt, 64)
-  const db = await mysql.createConnection({
-    host: process.env.DB_HOST || 'localhost',
-    port: Number(process.env.DB_PORT) || 3306,
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'campus_os',
-  })
+  const conn = await db.getConnection()
   try {
-    await db.beginTransaction()
-    const [university] = await db.query('INSERT INTO universities (name, city) VALUES (?, ?)', [universityName, city])
-    const [college] = await db.query('INSERT INTO colleges (university_id, name) VALUES (?, ?)', [university.insertId, collegeName])
-    const [department] = await db.query('INSERT INTO departments (college_id, name) VALUES (?, ?)', [college.insertId, departmentName])
-    const [admin] = await db.query(
+    await conn.beginTransaction()
+    const [university] = await conn.query('INSERT INTO universities (name, city) VALUES (?, ?)', [universityName, city])
+    const [college] = await conn.query('INSERT INTO colleges (university_id, name) VALUES (?, ?)', [university.insertId, collegeName])
+    const [department] = await conn.query('INSERT INTO departments (college_id, name) VALUES (?, ?)', [college.insertId, departmentName])
+    const [admin] = await conn.query(
       'INSERT INTO users (email, password_hash, full_name, role) VALUES (?, ?, ?, \'admin\')',
       [email, `${salt}$${hash.toString('hex')}`, adminName]
     )
-    await db.query('INSERT INTO admin_profiles (user_id, university_id) VALUES (?, ?)', [admin.insertId, university.insertId])
-    await db.commit()
+    await conn.query('INSERT INTO admin_profiles (user_id, university_id) VALUES (?, ?)', [admin.insertId, university.insertId])
+    await conn.commit()
     process.stdout.write(`Created ${universityName} (university ID ${university.insertId}) and its institution administrator ${email}.\n`)
   } catch (err) {
-    await db.rollback()
+    await conn.rollback()
     throw err
   } finally {
+    conn.release()
     await db.end()
   }
 }

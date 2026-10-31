@@ -1,9 +1,9 @@
 const crypto = require('crypto')
 const path = require('path')
 const { promisify } = require('util')
-const mysql = require('mysql2/promise')
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
+const db = require('../database')
 const scrypt = promisify(crypto.scrypt)
 
 function ask(prompt, hidden = false) {
@@ -33,7 +33,6 @@ async function main() {
   if (password.length < 8 || password.length > 128 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) throw new Error('Password must be 8-128 characters and contain a letter and a number.')
   const salt = crypto.randomBytes(16).toString('hex')
   const hash = await scrypt(password, salt, 64)
-  const db = await mysql.createConnection({ host: process.env.DB_HOST || 'localhost', port: Number(process.env.DB_PORT) || 3306, user: process.env.DB_USER || 'root', password: process.env.DB_PASSWORD || '', database: process.env.DB_NAME || 'campus_os' })
   try {
     const [created] = await db.query("INSERT INTO users (email, password_hash, full_name, role, account_status) VALUES (?, ?, ?, 'platform_admin', 'active')", [email, `${salt}$${hash.toString('hex')}`, name])
     process.stdout.write(`Created platform administrator account ${email} (user ${created.insertId}).\n`)

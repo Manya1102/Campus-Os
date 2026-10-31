@@ -1,9 +1,9 @@
 const crypto = require('crypto')
 const path = require('path')
 const { promisify } = require('util')
-const mysql = require('mysql2/promise')
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
+const db = require('../database')
 
 const scrypt = promisify(crypto.scrypt)
 
@@ -59,28 +59,23 @@ async function main() {
 
   const salt = crypto.randomBytes(16).toString('hex')
   const hash = await scrypt(password, salt, 64)
-  const db = await mysql.createConnection({
-    host: process.env.DB_HOST || 'localhost',
-    port: Number(process.env.DB_PORT) || 3306,
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'campus_os',
-  })
+  const conn = await db.getConnection()
   try {
-    await db.beginTransaction()
-    const [[university]] = await db.query('SELECT id FROM universities WHERE id = ?', [universityId])
+    await conn.beginTransaction()
+    const [[university]] = await conn.query('SELECT id FROM universities WHERE id = ?', [universityId])
     if (!university) throw new Error('University not found.')
-    const [created] = await db.query(
+    const [created] = await conn.query(
       'INSERT INTO users (email, password_hash, full_name, role) VALUES (?, ?, ?, \'admin\')',
       [email, `${salt}$${hash.toString('hex')}`, name]
     )
-    await db.query('INSERT INTO admin_profiles (user_id, university_id) VALUES (?, ?)', [created.insertId, universityId])
-    await db.commit()
+    await conn.query('INSERT INTO admin_profiles (user_id, university_id) VALUES (?, ?)', [created.insertId, universityId])
+    await conn.commit()
     process.stdout.write(`Created institution administrator account for ${email}.\n`)
   } catch (err) {
-    await db.rollback()
+    await conn.rollback()
     throw err
   } finally {
+    conn.release()
     await db.end()
   }
 }

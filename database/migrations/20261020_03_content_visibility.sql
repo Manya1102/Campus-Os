@@ -1,20 +1,33 @@
--- Make sharing scope explicit for campus events, resources and opportunities.
--- Existing resources and opportunities keep their previous cross-campus visibility.
-USE campus_os;
-
+-- Make sharing scope explicit for events, resources, and opportunities.
 ALTER TABLE events
-  ADD COLUMN visibility ENUM('university','cross_campus') NOT NULL DEFAULT 'university'
-  AFTER ends_at;
+  ADD COLUMN IF NOT EXISTS visibility varchar(20) NOT NULL DEFAULT 'university';
 
 ALTER TABLE resources
-  ADD COLUMN university_id INT NULL AFTER id,
-  ADD COLUMN visibility ENUM('university','cross_campus') NOT NULL DEFAULT 'cross_campus' AFTER university_id,
-  ADD CONSTRAINT fk_resources_university
-    FOREIGN KEY (university_id) REFERENCES universities(id) ON DELETE CASCADE;
+  ADD COLUMN IF NOT EXISTS university_id integer,
+  ADD COLUMN IF NOT EXISTS visibility varchar(20) NOT NULL DEFAULT 'cross_campus';
 
 ALTER TABLE opportunities
-  ADD COLUMN university_id INT NULL AFTER id,
-  ADD COLUMN visibility ENUM('university','cross_campus') NOT NULL DEFAULT 'cross_campus' AFTER university_id,
-  ADD COLUMN application_url VARCHAR(500) NULL AFTER skills,
-  ADD CONSTRAINT fk_opportunities_university
-    FOREIGN KEY (university_id) REFERENCES universities(id) ON DELETE CASCADE;
+  ADD COLUMN IF NOT EXISTS university_id integer,
+  ADD COLUMN IF NOT EXISTS visibility varchar(20) NOT NULL DEFAULT 'cross_campus',
+  ADD COLUMN IF NOT EXISTS application_url varchar(500);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'events'::regclass AND conname = 'events_visibility_check') THEN
+    ALTER TABLE events ADD CONSTRAINT events_visibility_check CHECK (visibility IN ('university', 'cross_campus'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'resources'::regclass AND conname = 'resources_visibility_check') THEN
+    ALTER TABLE resources ADD CONSTRAINT resources_visibility_check CHECK (visibility IN ('university', 'cross_campus'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'opportunities'::regclass AND conname = 'opportunities_visibility_check') THEN
+    ALTER TABLE opportunities ADD CONSTRAINT opportunities_visibility_check CHECK (visibility IN ('university', 'cross_campus'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'resources'::regclass AND conname = 'fk_resources_university') THEN
+    ALTER TABLE resources ADD CONSTRAINT fk_resources_university
+      FOREIGN KEY (university_id) REFERENCES universities(id) ON DELETE CASCADE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'opportunities'::regclass AND conname = 'fk_opportunities_university') THEN
+    ALTER TABLE opportunities ADD CONSTRAINT fk_opportunities_university
+      FOREIGN KEY (university_id) REFERENCES universities(id) ON DELETE CASCADE;
+  END IF;
+END $$;

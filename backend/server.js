@@ -16,7 +16,7 @@ const path = require('path')
 const { promisify } = require('util')
 const express = require('express')
 const cors = require('cors')
-const mysql = require('mysql2/promise')
+const db = require('./database')
 const jwt = require('jsonwebtoken')
 
 const scrypt = promisify(crypto.scrypt)
@@ -27,7 +27,7 @@ const IS_PRODUCTION = process.env.NODE_ENV === 'production'
 const RESOURCE_UPLOAD_DIR = path.join(__dirname, 'uploads')
 
 // ---------------------------------------------------------------------------
-// 1. Setup: secret key, CORS, JSON, and the MySQL connection
+// 1. Setup: secret key, CORS, JSON, and the Supabase PostgreSQL connection
 // ---------------------------------------------------------------------------
 
 // The secret used to sign login tokens. Anyone who knows it can pretend to be any user,
@@ -60,16 +60,6 @@ app.use(
   })
 )
 app.use(express.json({ limit: '100kb' }))
-
-const db = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  port: Number(process.env.DB_PORT) || 3306,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'campus_os',
-  waitForConnections: true,
-  connectionLimit: 10,
-})
 
 // Wraps a route so any error becomes a clean JSON response instead of crashing the server.
 function route(handler) {
@@ -474,8 +464,9 @@ app.post('/api/auth/signup', ipLimiter, route(async (req, res) => {
         // Enroll only in the subjects offered to this exact class section.
         if (studentPlacement.sectionId) {
           await conn.query(
-            `INSERT IGNORE INTO enrollments (student_id, subject_id)
-             SELECT ?, subject_id FROM subject_offerings WHERE class_section_id = ?`,
+            `INSERT INTO enrollments (student_id, subject_id)
+             SELECT ?, subject_id FROM subject_offerings WHERE class_section_id = ?
+             ON CONFLICT (student_id, subject_id) DO NOTHING`,
             [createdStudent.insertId, studentPlacement.sectionId]
           )
         }
@@ -549,7 +540,7 @@ app.get('/api/auth/me', route(async (req, res) => {
 const ASSIGNMENT_FIELDS = `
   a.id, a.title, sub.name AS subject, sub.code AS code,
   a.description,
-  DATE_FORMAT(a.due_date, '%Y-%m-%d') AS dueDate,
+  TO_CHAR(a.due_date, 'YYYY-MM-DD') AS dueDate,
   a.priority,
   COALESCE(asub.status, 'Pending') AS status`
 
@@ -592,10 +583,10 @@ app.patch('/api/assignments/:id/status', studentOnly, route(async (req, res) => 
 
   await db.query(
     `INSERT INTO assignment_submissions (assignment_id, student_id, status, completed_at)
-     VALUES (?, ?, ?, IF(? = 'Completed', NOW(), NULL))
-     ON DUPLICATE KEY UPDATE
-       status = VALUES(status),
-       completed_at = IF(VALUES(status) = 'Completed', NOW(), NULL)`,
+     VALUES (?, ?, ?, CASE WHEN ? = 'Completed' THEN CURRENT_TIMESTAMP ELSE NULL END)
+     ON CONFLICT (assignment_id, student_id) DO UPDATE SET
+       status = EXCLUDED.status,
+       completed_at = CASE WHEN EXCLUDED.status = 'Completed' THEN CURRENT_TIMESTAMP ELSE NULL END`,
     [assignmentId, req.user.student_id, status, status]
   )
 
@@ -614,7 +605,7 @@ app.patch('/api/assignments/:id/status', studentOnly, route(async (req, res) => 
 async function getAttendance(studentId) {
   const [rows] = await db.query(
     `SELECT sub.id, sub.name, sub.code,
-            COALESCE(SUM(a.status IN ('present','late')), 0) AS attended,
+            COALESCE(SUM((a.status IN ('present','late'))::integer), 0) AS attended,
             COUNT(a.id) AS total
      FROM enrollments e
      JOIN subjects sub ON sub.id = e.subject_id
@@ -653,10 +644,10 @@ async function getTimetable(studentId, dayParam) {
   const dayCode = DAY_CODES.includes(dayParam) ? dayParam : todayCode
 
   const [rows] = await db.query(
-    `SELECT TIME_FORMAT(t.start_time, '%h:%i %p') AS time,
-            TIME_FORMAT(t.end_time,   '%h:%i %p') AS endTime,
-            TIME_FORMAT(t.start_time, '%H:%i')    AS start24,
-            TIME_FORMAT(t.end_time,   '%H:%i')    AS end24,
+    `SELECT TO_CHAR(t.start_time, 'HH12:MI AM') AS time,
+            TO_CHAR(t.end_time,   'HH12:MI AM') AS endTime,
+            TO_CHAR(t.start_time, 'HH24:MI')    AS start24,
+            TO_CHAR(t.end_time,   'HH24:MI')    AS end24,
             sub.name AS subject, sub.code, t.room, t.class_type AS type
      FROM timetable t
      JOIN subjects sub ON sub.id = t.subject_id
@@ -697,7 +688,7 @@ app.get('/api/timetable', studentOnly, route(async (req, res) => {
 
 const ANNOUNCEMENT_FIELDS = `
   a.id, a.category, a.title, a.body AS description,
-  DATE_FORMAT(a.created_at, '%Y-%m-%d') AS date,
+  TO_CHAR(a.created_at, 'YYYY-MM-DD') AS date,
   a.audience, a.pinned`
 
 // A notice is visible if it is for the whole university, or for the user's college,
@@ -719,8 +710,8 @@ app.get('/api/announcements', route(async (req, res) => {
 app.get('/api/calendar', route(async (req, res) => {
   const [rows] = await db.query(
     `SELECT c.id, c.title, c.category,
-            DATE_FORMAT(c.starts_on, '%Y-%m-%d') AS startsOn,
-            DATE_FORMAT(c.ends_on, '%Y-%m-%d') AS endsOn,
+            TO_CHAR(c.starts_on, 'YYYY-MM-DD') AS startsOn,
+            TO_CHAR(c.ends_on, 'YYYY-MM-DD') AS endsOn,
             c.description, c.audience, c.eligible_program_id AS eligibleProgramId,
             p.name AS eligibleProgram
      FROM academic_calendar_items c
@@ -766,8 +757,8 @@ app.post('/api/announcements', facultyOnly, route(async (req, res) => {
 app.get('/api/events', route(async (req, res) => {
   const [rows] = await db.query(
     `SELECT e.id, e.title, e.category, e.visibility,
-            DATE_FORMAT(e.starts_at, '%Y-%m-%d') AS date,
-            TRIM(DATE_FORMAT(e.starts_at, '%l:%i %p')) AS time,
+            TO_CHAR(e.starts_at, 'YYYY-MM-DD') AS date,
+            TRIM(TO_CHAR(e.starts_at, 'FMHH12:MI AM')) AS time,
             e.location, e.description, e.seats_info AS seats,
             EXISTS(SELECT 1 FROM event_registrations r
                    WHERE r.event_id = e.id AND r.user_id = ?) AS registered
@@ -775,7 +766,7 @@ app.get('/api/events', route(async (req, res) => {
      WHERE (e.university_id = ? OR e.visibility = 'cross_campus')
        AND e.audience IN ('everyone', ?)
        AND (e.eligible_program_id IS NULL OR e.eligible_program_id = ?)
-       AND e.starts_at >= NOW()
+       AND e.starts_at >= CURRENT_TIMESTAMP
      ORDER BY e.starts_at`,
     [req.user.user_id, req.user.university_id, req.user.role === 'student' ? 'students' : req.user.role === 'faculty' ? 'faculty' : 'everyone', req.user.program_id || null]
   )
@@ -787,7 +778,7 @@ async function requireEvent(req) {
   const [found] = await db.query(
     `SELECT id FROM events
      WHERE id = ? AND (university_id = ? OR visibility = 'cross_campus')
-       AND audience IN ('everyone', ?) AND (eligible_program_id IS NULL OR eligible_program_id = ?) AND starts_at >= NOW()`,
+       AND audience IN ('everyone', ?) AND (eligible_program_id IS NULL OR eligible_program_id = ?) AND starts_at >= CURRENT_TIMESTAMP`,
     [eventId, req.user.university_id, req.user.role === 'student' ? 'students' : req.user.role === 'faculty' ? 'faculty' : 'everyone', req.user.program_id || null]
   )
   if (!found.length) throw httpError(404, 'Event not found')
@@ -797,7 +788,7 @@ async function requireEvent(req) {
 app.post('/api/events/:id/register', route(async (req, res) => {
   const eventId = await requireEvent(req)
   await db.query(
-    'INSERT IGNORE INTO event_registrations (event_id, user_id) VALUES (?, ?)',
+    'INSERT INTO event_registrations (event_id, user_id) VALUES (?, ?) ON CONFLICT (event_id, user_id) DO NOTHING',
     [eventId, req.user.user_id]
   )
   res.json({ id: eventId, registered: true })
@@ -828,7 +819,7 @@ async function setSaved(userId, type, table, itemId, saved, universityId, role, 
 
   if (saved) {
     await db.query(
-      'INSERT IGNORE INTO saved_items (user_id, item_type, item_id) VALUES (?, ?, ?)',
+      'INSERT INTO saved_items (user_id, item_type, item_id) VALUES (?, ?, ?) ON CONFLICT (user_id, item_type, item_id) DO NOTHING',
       [userId, type, itemId]
     )
   } else {
@@ -929,14 +920,14 @@ app.delete('/api/resources/:id/favourite', route(async (req, res) => {
 app.get('/api/career', studentOnly, route(async (req, res) => {
   const [rows] = await db.query(
     `SELECT o.id, o.title, o.company, o.type, o.mode, o.location, o.stipend, o.application_url AS applicationUrl, o.visibility,
-            DATE_FORMAT(o.deadline, '%Y-%m-%d') AS deadline,
+            TO_CHAR(o.deadline, 'YYYY-MM-DD') AS deadline,
             o.category, o.description, o.skills,
             EXISTS(SELECT 1 FROM saved_items s
                    WHERE s.user_id = ? AND s.item_type = 'opportunity' AND s.item_id = o.id) AS saved
      FROM opportunities o
      WHERE (o.visibility = 'cross_campus' OR o.university_id = ?)
        AND o.audience IN ('everyone', 'students') AND (o.eligible_program_id IS NULL OR o.eligible_program_id = ?)
-       AND o.deadline >= CURDATE()
+       AND o.deadline >= CURRENT_DATE
      ORDER BY o.deadline, o.id`,
     [req.user.user_id, req.user.university_id, req.user.program_id || null]
   )
@@ -944,7 +935,7 @@ app.get('/api/career', studentOnly, route(async (req, res) => {
     rows.map((r) => ({
       ...r,
       saved: Boolean(r.saved),
-      // mysql2 normally parses JSON columns already; handle a raw string just in case
+      // PostgreSQL JSONB is normally parsed already; handle a raw string just in case.
       skills: typeof r.skills === 'string' ? JSON.parse(r.skills) : r.skills,
     }))
   )
@@ -1123,18 +1114,20 @@ app.post('/api/faculty/attendance', facultyOnly, route(async (req, res) => {
     return [studentId, subjectId, date, record.status, req.user.user_id]
   })
 
+  const tuples = rows.map(() => `(${Array(5).fill('?').join(', ')})`).join(', ')
   await db.query(
     `INSERT INTO attendance (student_id, subject_id, class_date, status, marked_by)
-     VALUES ?
-     ON DUPLICATE KEY UPDATE status = VALUES(status), marked_by = VALUES(marked_by)`,
-    [rows]
+     VALUES ${tuples}
+     ON CONFLICT (student_id, subject_id, class_date)
+     DO UPDATE SET status = EXCLUDED.status, marked_by = EXCLUDED.marked_by`,
+    rows.flat()
   )
   res.json({ saved: rows.length })
 }))
 
 const FACULTY_ASSIGNMENT_FIELDS = `
   a.id, a.title, a.description, sub.code, sub.name AS subject,
-  DATE_FORMAT(a.due_date, '%Y-%m-%d') AS dueDate, a.priority,
+  TO_CHAR(a.due_date, 'YYYY-MM-DD') AS dueDate, a.priority,
   (SELECT COUNT(*) FROM enrollments e WHERE e.subject_id = a.subject_id) AS totalStudents,
   (SELECT COUNT(*) FROM assignment_submissions s
      JOIN enrollments e2 ON e2.student_id = s.student_id AND e2.subject_id = a.subject_id
@@ -1169,7 +1162,7 @@ app.get('/api/faculty/assignments/:id/submissions', facultyOnly, route(async (re
   const [rows] = await db.query(
     `SELECT st.id AS studentId, u.full_name AS student, st.roll_number AS rollNumber,
             COALESCE(asub.status, 'Pending') AS status,
-            DATE_FORMAT(asub.completed_at, '%Y-%m-%d %H:%i') AS completedAt
+            TO_CHAR(asub.completed_at, 'YYYY-MM-DD HH24:MI') AS completedAt
      FROM assignments a
      JOIN enrollments e ON e.subject_id = a.subject_id
      JOIN students st ON st.id = e.student_id
@@ -1217,9 +1210,9 @@ app.post('/api/faculty/assignments', facultyOnly, route(async (req, res) => {
 app.delete('/api/faculty/assignments/:id', facultyOnly, route(async (req, res) => {
   const id = Number(req.params.id)
   const [result] = await db.query(
-    `DELETE a FROM assignments a
-     JOIN subjects s ON s.id = a.subject_id
-     WHERE a.id = ? AND s.faculty_id = ?`,
+    `DELETE FROM assignments a
+     USING subjects s
+     WHERE s.id = a.subject_id AND a.id = ? AND s.faculty_id = ?`,
     [id, req.user.faculty_id]
   )
   if (result.affectedRows === 0) throw httpError(404, 'Assignment not found')
@@ -1238,10 +1231,10 @@ app.get('/api/dashboard', studentOnly, route(async (req, res) => {
     getAssignments(student_id),
     getAttendance(student_id),
     db.query(
-      `SELECT title, DATE_FORMAT(starts_at, '%Y-%m-%d') AS date
+      `SELECT title, TO_CHAR(starts_at, 'YYYY-MM-DD') AS date
        FROM events
-       WHERE university_id = ? AND starts_at >= NOW()
-         AND starts_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+       WHERE university_id = ? AND starts_at >= CURRENT_TIMESTAMP
+         AND starts_at < (CURRENT_TIMESTAMP + INTERVAL '7 days')
        ORDER BY starts_at LIMIT 5`,
       [university_id]
     ),
@@ -1287,8 +1280,8 @@ app.get('/api/faculty/dashboard', facultyOnly, route(async (req, res) => {
       [facultyId]
     ),
     db.query(
-      `SELECT sub.id AS subjectId, TIME_FORMAT(t.start_time, '%h:%i %p') AS time,
-              TIME_FORMAT(t.end_time,   '%h:%i %p') AS endTime,
+      `SELECT sub.id AS subjectId, TO_CHAR(t.start_time, 'HH12:MI AM') AS time,
+              TO_CHAR(t.end_time,   'HH12:MI AM') AS endTime,
               sub.name AS subject, sub.code, t.room, t.class_type AS type
        FROM timetable t JOIN subjects sub ON sub.id = t.subject_id
        WHERE sub.faculty_id = ? AND t.day_of_week = ?
@@ -1298,15 +1291,15 @@ app.get('/api/faculty/dashboard', facultyOnly, route(async (req, res) => {
     // Students whose attendance in one of this teacher's subjects is below 75%
     db.query(
       `SELECT u.full_name AS student, sub.id AS subjectId, sub.code, sub.name AS subject,
-              SUM(a.status IN ('present','late')) AS attended, COUNT(*) AS total
+              SUM((a.status IN ('present','late'))::integer) AS attended, COUNT(*) AS total
        FROM attendance a
        JOIN subjects sub ON sub.id = a.subject_id
        JOIN students st ON st.id = a.student_id
        JOIN users u ON u.id = st.user_id
        WHERE sub.faculty_id = ?
        GROUP BY a.student_id, a.subject_id, u.full_name, sub.code, sub.name
-       HAVING SUM(a.status IN ('present','late')) * 4 < COUNT(*) * 3
-       ORDER BY SUM(a.status IN ('present','late')) / COUNT(*) ASC
+       HAVING SUM((a.status IN ('present','late'))::integer) * 4 < COUNT(*) * 3
+       ORDER BY SUM((a.status IN ('present','late'))::numeric) / COUNT(*) ASC
        LIMIT 10`,
       [facultyId]
     ),
@@ -1381,16 +1374,16 @@ app.get('/api/admin/overview', adminOnly, institutionAdminOnly, route(async (req
     ),
     db.query(
       `SELECT t.id, t.subject_id AS subjectId, s.code, s.name AS subject,
-              t.day_of_week AS day, TIME_FORMAT(t.start_time, '%H:%i') AS startTime,
-              TIME_FORMAT(t.end_time, '%H:%i') AS endTime, t.room, t.class_type AS classType
+              t.day_of_week AS day, TO_CHAR(t.start_time, 'HH24:MI') AS startTime,
+              TO_CHAR(t.end_time, 'HH24:MI') AS endTime, t.room, t.class_type AS classType
        FROM timetable t JOIN subjects s ON s.id = t.subject_id
        JOIN departments d ON d.id = s.department_id
        JOIN colleges c ON c.id = d.college_id
-       WHERE c.university_id = ? ORDER BY FIELD(t.day_of_week,'Mon','Tue','Wed','Thu','Fri','Sat'), t.start_time`,
+       WHERE c.university_id = ? ORDER BY CASE t.day_of_week WHEN 'Mon' THEN 1 WHEN 'Tue' THEN 2 WHEN 'Wed' THEN 3 WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 WHEN 'Sat' THEN 6 END, t.start_time`,
       [universityId]
     ),
     db.query(
-      `SELECT id, title, category, visibility, DATE_FORMAT(starts_at, '%Y-%m-%dT%H:%i') AS startsAt
+      `SELECT id, title, category, visibility, TO_CHAR(starts_at, 'YYYY-MM-DD"T"HH24:MI') AS startsAt
        FROM events WHERE university_id = ? ORDER BY starts_at DESC`,
       [universityId]
     ),
@@ -1401,14 +1394,14 @@ app.get('/api/admin/overview', adminOnly, institutionAdminOnly, route(async (req
     ),
     db.query(
       `SELECT id, title, company, type, visibility,
-              DATE_FORMAT(deadline, '%Y-%m-%d') AS deadline
+              TO_CHAR(deadline, 'YYYY-MM-DD') AS deadline
        FROM opportunities WHERE university_id = ? ORDER BY deadline`,
       [universityId]
     ),
     db.query(
       `SELECT id, title, category,
-              DATE_FORMAT(starts_on, '%Y-%m-%d') AS startsOn,
-              DATE_FORMAT(ends_on, '%Y-%m-%d') AS endsOn,
+              TO_CHAR(starts_on, 'YYYY-MM-DD') AS startsOn,
+              TO_CHAR(ends_on, 'YYYY-MM-DD') AS endsOn,
               description, audience, eligible_program_id AS eligibleProgramId
        FROM academic_calendar_items WHERE university_id = ? ORDER BY starts_on, id`,
       [universityId]
@@ -1475,8 +1468,9 @@ app.post('/api/admin/offerings', adminOnly, institutionAdminOnly, route(async (r
   await withTransaction(async (conn) => {
     await conn.query('INSERT INTO subject_offerings (subject_id, class_section_id, faculty_id) VALUES (?, ?, ?)', [subjectId, classSectionId, valid[0].faculty_id])
     await conn.query(
-      `INSERT IGNORE INTO enrollments (student_id, subject_id)
-       SELECT id, ? FROM students WHERE class_section_id = ?`, [subjectId, classSectionId]
+      `INSERT INTO enrollments (student_id, subject_id)
+       SELECT id, ? FROM students WHERE class_section_id = ?
+       ON CONFLICT (student_id, subject_id) DO NOTHING`, [subjectId, classSectionId]
     )
   }).catch((err) => {
     if (err.code === 'ER_DUP_ENTRY') throw httpError(409, 'This subject is already offered to that section')
@@ -1900,10 +1894,10 @@ app.post('/api/admin/timetable', adminOnly, institutionAdminOnly, route(async (r
 app.delete('/api/admin/timetable/:id', adminOnly, institutionAdminOnly, route(async (req, res) => {
   const scheduleId = wholeNumber(req.params.id, 'Class', 1, 2147483647)
   const [result] = await db.query(
-    `DELETE t FROM timetable t JOIN subjects s ON s.id = t.subject_id
-     JOIN departments d ON d.id = s.department_id
-     JOIN colleges c ON c.id = d.college_id
-     WHERE t.id = ? AND c.university_id = ?`,
+    `DELETE FROM timetable t
+     USING subjects s, departments d, colleges c
+     WHERE s.id = t.subject_id AND d.id = s.department_id AND c.id = d.college_id
+       AND t.id = ? AND c.university_id = ?`,
     [scheduleId, req.user.university_id]
   )
   if (!result.affectedRows) throw httpError(404, 'Class not found in this institution')
