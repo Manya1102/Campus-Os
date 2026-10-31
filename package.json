@@ -2,7 +2,7 @@
   "name": "campus-os-vercel",
   "private": true,
   "scripts": {
-    "build": "npm --prefix frontend run build"
+    "build": "npm --prefix frontend run build -- --outDir ../dist"
   },
   "dependencies": {
     "cors": "^2.8.5",
