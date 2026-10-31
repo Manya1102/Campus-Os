@@ -75,11 +75,11 @@ Sign in with that account to create an institution and its first institution adm
 
 ## Deploying the full app to Vercel
 
-The root `vercel.json` deploys the Vite frontend and Express API as two Vercel services under one project and domain. It sends `/api/*` requests to Express and all other paths to the React single-page app. In the Vercel project settings, set **Root Directory** to the repository root (`.`), not `backend/` or `frontend/`.
+The root `vercel.json` deploys the Vite frontend and Express API in one Vercel project and domain. It sends `/api/*` requests to Express and all other paths to the React single-page app. In the Vercel project settings, set **Root Directory** to the repository root (`.`), not `backend/` or `frontend/`.
 
 Add these server environment variables in Vercel for Production and Preview: `DATABASE_URL` (the Supabase PostgreSQL connection string), `DATABASE_SSL=require`, `DB_POOL_SIZE=5`, `JWT_SECRET` (a private random value of at least 32 characters), `NODE_ENV=production`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET=campus-resources`. Keep the service role key server-side; never prefix it with `VITE_`. The frontend uses the same-origin `/api` path in production, so it does not need a `VITE_API_URL` variable.
 
-Create a **private** Supabase Storage bucket named `campus-resources` before enabling faculty PDF uploads. In Vercel, redeploy after adding or changing environment variables. Vercel Services are currently documented as beta and support deploying multiple apps in one project; the project-level routing config lives in `vercel.json`.
+Create a **private** Supabase Storage bucket named `campus-resources` before enabling faculty PDF uploads. In Vercel, redeploy after adding or changing environment variables. The project-level frontend/API routing lives in `vercel.json`.
 
 ## Verified student and faculty signup
 
