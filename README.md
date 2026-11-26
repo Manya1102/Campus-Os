@@ -126,3 +126,18 @@ Other routes for attendance, assignments, timetables, announcements, faculty too
 - Account password changes and password recovery are not yet implemented in the user interface.
 - Incremental PostgreSQL migrations are intended for an existing base schema. For a fresh project, use the full schema once and keep the migrations under source control for later upgrades.
 - Cross-campus content is visible to all Campus OS institutions when its audience/program rules permit it. Per-partner institution allowlists are not implemented.
+
+
+## Contributing
+
+Contributions to Campus OS are welcome!
+
+To contribute:
+
+1. Fork the repository.
+2. Create a new branch for your changes.
+3. Make your changes and test them.
+4. Commit your changes with a descriptive commit message.
+5. Push your branch and open a Pull Request.
+
+Please provide a clear description of your changes when submitting a PR.
